@@ -1,0 +1,8 @@
+name: demo
+version: "1.0.0"
+profile: demo
+model-paths: ["models"]
+target-path: target
+models:
+  demo:
+    +materialized: table

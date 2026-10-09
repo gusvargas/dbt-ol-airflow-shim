@@ -1,0 +1,13 @@
+astro
+.git
+.env
+airflow_settings.yaml
+logs/
+.venv
+airflow.db
+airflow.cfg
+include/ol_events/
+include/dbt_logs/
+dbt/demo/target/
+dbt/demo/logs/
+dbt/demo/*.duckdb
