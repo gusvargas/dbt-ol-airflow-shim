@@ -65,10 +65,17 @@ for e in dbt_events:
     )
 
 print("== dbt model events -> dbt run -> airflow")
+# with --consume-structured-logs, each model's sql statements are separate jobs ("<model>.sql.<n>")
+# parented to the model run
+model_run_ids = {}
+sql_events = []
 for e in dbt_events:
     if e["job"]["name"].startswith("dbt-run-"):
         continue
     parent = parent_of(e)
+    if parent and parent["run"]["runId"] not in dbt_run_ids and ".sql." in e["job"]["name"]:
+        sql_events.append(e)
+        continue
     if not parent or parent["run"]["runId"] not in dbt_run_ids:
         if not dag_filter:
             print(f"  BAD {e['eventType']:<8} {e['job']['name']} has no known dbt run parent")
@@ -76,12 +83,27 @@ for e in dbt_events:
         continue
     task, root_id = dbt_run_ids[parent["run"]["runId"]]
     model_root = parent.get("root", {}).get("run", {}).get("runId")
+    model_run_ids[e["run"]["runId"]] = root_id
     ok = model_root == root_id
     failures += not ok
     print(
         f"  {'OK ' if ok else 'BAD'} {e['eventType']:<8} {e['job']['name']}  parent=dbt run "
         f"{parent['run']['runId']}  root={model_root}  (airflow task {task[0] if task else '?'})"
     )
+
+print("== dbt sql statement events -> dbt model")
+for e in sql_events:
+    parent = parent_of(e)
+    root_id = model_run_ids.get(parent["run"]["runId"])
+    if root_id is None:
+        if not dag_filter:
+            print(f"  BAD {e['eventType']:<8} {e['job']['name']} has no known dbt model parent")
+            failures += 1
+        continue
+    sql_root = parent.get("root", {}).get("run", {}).get("runId")
+    ok = sql_root == root_id
+    failures += not ok
+    print(f"  {'OK ' if ok else 'BAD'} {e['eventType']:<8} {e['job']['name']}  parent=model run {parent['run']['runId']}  root={sql_root}")
 
 print(f"\n{failures} problem(s)")
 sys.exit(1 if failures else 0)

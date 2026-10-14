@@ -2,7 +2,7 @@
 
 A proof of concept for instrumenting dbt with `dbt-ol` (OpenLineage) **without touching any call site of `dbt`**. It targets the case where DAGs run dbt from a `PythonOperator` that shells out with `subprocess` (`dbt run ...`, env copied from `os.environ`).
 
-It's a local Astro project (Runtime 3.2-2, openlineage-dbt 1.53.0, dbt-core 1.12.5 + duckdb) with one test DAG, `dags/dbt_test.py`.
+It's a local Astro project (Runtime 3.2-2, openlineage-dbt 1.54.0, dbt-core 1.12.5 + duckdb) with one test DAG, `dags/dbt_test.py`.
 
 There are two components:
 
@@ -24,10 +24,15 @@ fi
 # set a flag so that subsequent calls to the shim routes
 # to the real dbt
 export DBT_OL_ACTIVE=1
-exec dbt-ol "$@"
+exec dbt-ol --consume-structured-logs "$@"
 ```
 
 - **Recursion guard.** dbt-ol runs dbt as `subprocess.Popen(["dbt", ...])`, which looks `dbt` up on `PATH` and so finds the shim again. `DBT_OL_ACTIVE` is passed down to that child, so the inner call goes to the real dbt. Without the guard, dbt-ol keeps starting dbt-ol and dbt never runs.
+- **`--consume-structured-logs`.** dbt-ol reads dbt's JSON log stream while dbt runs, instead of parsing `run_results.json` at the end (its default). Without it, failures are close to invisible:
+  - **A model fails at runtime** (e.g. a missing table): only this mode puts dbt's error on the model's `FAIL` event (`Runtime Error in model … Catalog Error: Table with name … does not exist!`). The default mode sends `FAIL` with no message.
+  - **dbt fails before running any model** (e.g. a compilation error): the default mode sends nothing at all, because `run_results.json` isn't written. This mode still sends the dbt run's `START`/`FAIL`, but its message is generic (`` Command `dbt run` failed at … ``); the real error is only in dbt's console output.
+  - It also sends one job per SQL statement (`<model>.sql.<n>`), parented to the model run, so expect more events.
+  - dbt-ol strips the flag before calling dbt, leaves dbt's console output on stdout (so `| tee` still works) and exits with dbt's exit code. It leaves an empty `dbt-logs-<uuid>` directory in the dbt project directory after each run.
 - Every command goes through dbt-ol, not only `run`. Non-run commands such as `compile` or `ls` may emit empty `dbt-run-*` events or print extra dbt-ol log lines to stdout.
 
 ### Setup (`Dockerfile`)
@@ -61,7 +66,7 @@ task process (Airflow 3.2 task runner)
  5. dbt-ol reads the two vars -> parent facet on the dbt run = Airflow task, root = DAG run
 ```
 
-dbt-ol 1.53.0 reads only `OPENLINEAGE_CONTEXT` (JSON), `OPENLINEAGE_PARENT_ID` and `OPENLINEAGE_ROOT_PARENT_ID`. It does **not** read `OPENLINEAGE_PARENT_JOB_NAMESPACE`, `OPENLINEAGE_PARENT_JOB_NAME` or `OPENLINEAGE_PARENT_RUN_ID`.
+dbt-ol 1.54.0 reads only `OPENLINEAGE_CONTEXT` (JSON), `OPENLINEAGE_PARENT_ID` and `OPENLINEAGE_ROOT_PARENT_ID`. It does **not** read `OPENLINEAGE_PARENT_JOB_NAMESPACE`, `OPENLINEAGE_PARENT_JOB_NAME` or `OPENLINEAGE_PARENT_RUN_ID`.
 
 The env vars dbt-ol needs, set on the workers:
 

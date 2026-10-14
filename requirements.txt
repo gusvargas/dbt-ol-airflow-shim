@@ -1,6 +1,6 @@
-openlineage-python==1.53.0
-openlineage-integration-common==1.53.0
-openlineage-sql==1.53.0
-openlineage-dbt==1.53.0
+openlineage-python==1.54.0
+openlineage-integration-common==1.54.0
+openlineage-sql==1.54.0
+openlineage-dbt==1.54.0
 dbt-core==1.12.5
 dbt-duckdb==1.11.0
