@@ -16,10 +16,31 @@ There are two components:
 ```bash
 #!/usr/bin/env bash
 
+REAL_DBT=/usr/local/bin/dbt
+
 # don't re-invoke dbt-ol if it's already been invoked
 if [ -n "${DBT_OL_ACTIVE:-}" ]; then
-  exec /usr/local/bin/dbt "$@"
+  exec "$REAL_DBT" "$@"
 fi
+
+# the dbt subcommand is the first argument that names one
+subcommand=""
+for arg in "$@"; do
+  case "$arg" in
+    build|clean|clone|compile|debug|deps|docs|init|list|ls|parse|retry|run|run-operation|seed|show|snapshot|source|test)
+      subcommand="$arg"
+      break
+      ;;
+  esac
+done
+
+# with --consume-structured-logs, dbt-ol only handles these subcommands. for any other
+# (run-operation, deps, compile, ...) it never starts dbt and still exits 0, so those go
+# straight to the real dbt
+case "$subcommand" in
+  run|build|test|seed|snapshot|retry) ;;
+  *) exec "$REAL_DBT" "$@" ;;
+esac
 
 # set a flag so that subsequent calls to the shim routes
 # to the real dbt
@@ -33,7 +54,7 @@ exec dbt-ol --consume-structured-logs "$@"
   - **dbt fails before running any model** (e.g. a compilation error): the default mode sends nothing at all, because `run_results.json` isn't written. This mode still sends the dbt run's `START`/`FAIL`, but its message is generic (`` Command `dbt run` failed at … ``); the real error is only in dbt's console output.
   - It also sends one job per SQL statement (`<model>.sql.<n>`), parented to the model run, so expect more events.
   - dbt-ol strips the flag before calling dbt, leaves dbt's console output on stdout (so `| tee` still works) and exits with dbt's exit code. It leaves an empty `dbt-logs-<uuid>` directory in the dbt project directory after each run.
-- Every command goes through dbt-ol, not only `run`. Non-run commands such as `compile` or `ls` may emit empty `dbt-run-*` events or print extra dbt-ol log lines to stdout.
+- **Only `run`, `build`, `test`, `seed`, `snapshot` and `retry` go through dbt-ol.** Every other subcommand (`run-operation`, `deps`, `compile`, `ls`, ...) goes straight to the real dbt. With `--consume-structured-logs`, dbt-ol 1.54.0 rejects other subcommands without ever starting dbt and still exits 0, so routing them through it would silently skip them.
 
 ### Setup (`Dockerfile`)
 
@@ -45,7 +66,7 @@ ENV PATH="/usr/local/dbt-shim/bin:${PATH}"
 ```
 
 - The shim gets its own directory, which goes **first** on `PATH`. The pip-installed `dbt` stays untouched, so a later `pip install` can't overwrite the shim.
-- The real dbt is called by absolute path (`/usr/local/bin/dbt` on this runtime), because `dbt` on `PATH` is the shim. If dbt lives somewhere else, for example a venv, change that one path. Check it with `which -a dbt` inside a task.
+- The real dbt is called by absolute path (`/usr/local/bin/dbt` on this runtime), because `dbt` on `PATH` is the shim. If dbt lives somewhere else, for example a venv, change `REAL_DBT`. Check it with `which -a dbt` inside a task.
 
 ## 2. Providing OpenLineage env vars to dbt-ol
 
